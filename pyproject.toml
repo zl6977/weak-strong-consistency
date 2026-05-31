@@ -1,0 +1,21 @@
+[project]
+name = "weak-strong-consistency"
+version = "0.1.0"
+description = "Weak-strong consistency as an easiness probe for LLM text classification"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "pandas",
+    "pyarrow",
+    "pyyaml",
+    "openai",
+    "tiktoken",
+    "scikit-learn",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]

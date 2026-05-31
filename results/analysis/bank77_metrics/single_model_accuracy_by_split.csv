@@ -1,0 +1,13 @@
+role,split,run,model,n,accuracy,pred_ood_rate
+strong1,overall,gemma-4-31B-banking77-run0,cyankiwi/gemma-4-31B-it-AWQ-4bit,3080,0.8012987012987013,0.0
+strong1,id,gemma-4-31B-banking77-run0,cyankiwi/gemma-4-31B-it-AWQ-4bit,3080,0.8012987012987013,0.0
+strong1,ood,gemma-4-31B-banking77-run0,cyankiwi/gemma-4-31B-it-AWQ-4bit,0,nan,nan
+strong2,overall,Qwen3.6-27B-banking77-run0,cyankiwi/Qwen3.6-27B-AWQ-BF16-INT4,3080,0.7792207792207793,0.0
+strong2,id,Qwen3.6-27B-banking77-run0,cyankiwi/Qwen3.6-27B-AWQ-BF16-INT4,3080,0.7792207792207793,0.0
+strong2,ood,Qwen3.6-27B-banking77-run0,cyankiwi/Qwen3.6-27B-AWQ-BF16-INT4,0,nan,nan
+middle,overall,Qwen3.5-9B-banking77-run0,cyankiwi/Qwen3.5-9B-AWQ-4bit,3080,0.5821428571428572,0.0
+middle,id,Qwen3.5-9B-banking77-run0,cyankiwi/Qwen3.5-9B-AWQ-4bit,3080,0.5821428571428572,0.0
+middle,ood,Qwen3.5-9B-banking77-run0,cyankiwi/Qwen3.5-9B-AWQ-4bit,0,nan,nan
+weak,overall,Qwen3.6-35B-A3B-banking77-run0,cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit,3080,0.5668831168831169,0.0
+weak,id,Qwen3.6-35B-A3B-banking77-run0,cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit,3080,0.5668831168831169,0.0
+weak,ood,Qwen3.6-35B-A3B-banking77-run0,cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit,0,nan,nan

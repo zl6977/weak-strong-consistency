@@ -1,0 +1,5 @@
+role,run,model,n,accuracy,id_accuracy,oos_accuracy_recall,oos_precision,oos_recall,pred_oos_rate
+strong1,gemma-4-31B-banking77-run0,cyankiwi/gemma-4-31B-it-AWQ-4bit,3080,0.8012987012987013,0.8012987012987013,nan,nan,nan,0.0
+strong2,Qwen3.6-27B-banking77-run0,cyankiwi/Qwen3.6-27B-AWQ-BF16-INT4,3080,0.7792207792207793,0.7792207792207793,nan,nan,nan,0.0
+middle,Qwen3.5-9B-banking77-run0,cyankiwi/Qwen3.5-9B-AWQ-4bit,3080,0.5821428571428572,0.5821428571428572,nan,nan,nan,0.0
+weak,Qwen3.6-35B-A3B-banking77-run0,cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit,3080,0.5668831168831169,0.5668831168831169,nan,nan,nan,0.0

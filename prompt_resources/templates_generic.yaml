@@ -1,0 +1,21 @@
+Rank:
+  placeholders: [<sample>, <labels>, <descriptions>]
+  ranking: |-
+    Task Objective: Given following sample, and a list of label classes, select the single most likely label and respond with only its corresponding letter.
+
+    Instructions:
+    1. Consider the sample context.
+    2. Select the label that best matches the context.
+
+    Input:
+    Sample: <sample>
+    Label list:
+    ```
+    <labels>
+    ```
+    Label descriptions may be provided for reference:
+    ```
+    <descriptions>
+    ```
+    
+    Output: (Only the single letter of the most probable label)
