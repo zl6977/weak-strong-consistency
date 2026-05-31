@@ -23,15 +23,16 @@ except ImportError:  # pragma: no cover - sklearn is in pyproject, but keep scri
     roc_auc_score = None
 
 from src.agreement_metrics import compute_agreement_metrics
+from src import configs as cfg
 from src.run_task import _load_banking77_data, _load_clinc_oos_data
 
 
 DATASET_CONFIGS = {
     "clinc": {
         "loader": lambda: _load_clinc_oos_data(split="plus"),
-        "cache_root": Path("results/dual_cache/clinc"),
+        "cache_root": Path(cfg.dual_cache_dir) / "clinc",
         "cache_file": "cache_plus.json",
-        "output_dir": Path("results/analysis/clinc_metrics"),
+        "output_dir": Path(cfg.analysis_dir) / "clinc_metrics",
         "role_runs": {
             "strong1": "gemma-4-31B-run0-all",
             "strong2": "Qwen3.6-27B-run0-all",
@@ -42,9 +43,9 @@ DATASET_CONFIGS = {
     },
     "bank77": {
         "loader": _load_banking77_data,
-        "cache_root": Path("results/dual_cache/bank77"),
+        "cache_root": Path(cfg.dual_cache_dir) / "bank77",
         "cache_file": "cache_banking77_test.json",
-        "output_dir": Path("results/analysis/bank77_metrics"),
+        "output_dir": Path(cfg.analysis_dir) / "bank77_metrics",
         "role_runs": {
             "strong1": "gemma-4-31B-banking77-run0",
             "strong2": "Qwen3.6-27B-banking77-run0",

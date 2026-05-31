@@ -75,29 +75,6 @@ def top_k_overlap(
     return float(intersection) / k
 
 
-def top_k_rank_agreement(
-    pA: Dict[str, float],
-    pB: Dict[str, float],
-    k: int = 3,
-) -> float:
-    """Kendall tau-like agreement on rank positions within top-K.
-
-    Range: [0, 1]. Higher = more agreement.
-    """
-    topk_a = sorted(pA.keys(), key=lambda x: pA.get(x, 0), reverse=True)[:k]
-    topk_b = sorted(pB.keys(), key=lambda x: pB.get(x, 0), reverse=True)[:k]
-    union_labels = list(set(topk_a) | set(topk_b))
-    if not union_labels:
-        return 1.0
-    rank_diff_sum = 0.0
-    for lbl in union_labels:
-        rank_a = topk_a.index(lbl) if lbl in topk_a else k
-        rank_b = topk_b.index(lbl) if lbl in topk_b else k
-        rank_diff_sum += abs(rank_a - rank_b)
-    max_diff = k * len(union_labels)
-    return float(1.0 - rank_diff_sum / (max_diff + EPSILON))
-
-
 def compute_agreement_metrics(
     pA: Dict[str, float],
     pB: Dict[str, float],
@@ -112,5 +89,4 @@ def compute_agreement_metrics(
         "js_divergence": js_divergence(pA, pB),
         "cosine_similarity": cosine_similarity(pA, pB),
         "top_k_overlap": top_k_overlap(pA, pB, k=top_k),
-        "top_k_rank_agreement": top_k_rank_agreement(pA, pB, k=top_k),
     }

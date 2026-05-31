@@ -19,6 +19,8 @@ from sklearn.metrics import (
     roc_curve,
 )
 
+from .. import configs as cfg
+
 
 def compute_epoc(
     id_scores: np.ndarray,
@@ -181,12 +183,14 @@ def generate_plots(
     ground_truths: List[str],
     ood_label: str = "oos",
     ood_score_key: str = "fusion.ood_score",
-    output_dir: str = "results/plots/evaluation_plots",
+    output_dir: str | None = None,
 ) -> List[str]:
     """Generate evaluation plots.
 
     Returns list of file paths created.
     """
+    if output_dir is None:
+        output_dir = os.path.join(cfg.plot_dir, "evaluation_plots")
     os.makedirs(output_dir, exist_ok=True)
 
     ood_scores = []

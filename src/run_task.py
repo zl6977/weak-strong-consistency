@@ -5,7 +5,6 @@ from datetime import datetime
 
 import os
 import pandas as pd
-import json
 
 from . import configs as cfg
 from . import logprob_classifier as lc
@@ -106,7 +105,7 @@ def _load_clinc_oos_data(split: str = "plus", samples_per_class: int | None = No
     Returns (sample_list, intent_list, all_labels, label_descriptions, split).
     Intent 42 = 'oos' is the OOD class.
     """
-    parquet_path = f"dataset/clinc_oos/{split}/test-00000-of-00001.parquet"
+    parquet_path = os.path.join(cfg.clinc_dir, split, "test-00000-of-00001.parquet")
     df = pd.read_parquet(parquet_path)
 
     if samples_per_class is not None:
@@ -186,7 +185,7 @@ def _load_banking77_data(samples_per_class: int | None = None):
     Returns (sample_list, intent_list, all_labels, label_descriptions, split).
     BANKING77 has 77 in-domain banking intents and no explicit OOD class.
     """
-    parquet_path = "dataset/banking77/data/test-00000-of-00001-ca30debcf4e3446b.parquet"
+    parquet_path = os.path.join(cfg.banking77_dir, "data", "test-00000-of-00001-ca30debcf4e3446b.parquet")
     df = pd.read_parquet(parquet_path)
 
     if samples_per_class is not None:
