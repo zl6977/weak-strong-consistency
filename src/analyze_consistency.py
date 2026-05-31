@@ -1,8 +1,8 @@
-"""Reproducible consistency analysis from cached LLM runs.
+"""Reproduce the paper analysis from cached LLM top-label runs.
 
 The empirical role assignment used here is:
 strong1 = Gemma 31B, strong2 = Qwen 27B, middle = Qwen 9B, weak = Qwen 35B.
-The strong1 model remains the predictor for agreement-gate metrics.
+The strong1 model remains the predictor; the other models are validators.
 """
 
 from __future__ import annotations
@@ -16,13 +16,6 @@ from typing import Any
 
 import numpy as np
 
-try:
-    from sklearn.metrics import average_precision_score, roc_auc_score
-except ImportError:  # pragma: no cover - sklearn is in pyproject, but keep script portable.
-    average_precision_score = None
-    roc_auc_score = None
-
-from src.agreement_metrics import compute_agreement_metrics
 from src import configs as cfg
 from src.run_task import _load_banking77_data, _load_clinc_oos_data
 
@@ -147,55 +140,15 @@ def model_accuracy_rows(
     return rows
 
 
-def model_accuracy_split_rows(
+def agreement_by_split_rows(
     runs: dict[str, dict[str, Any]],
     gold: list[str],
     oos_label: str,
 ) -> list[dict[str, Any]]:
     rows = []
     gold_arr = np.array(gold)
-    split_masks = {
-        "overall": np.ones(len(gold_arr), dtype=bool),
-        "id": gold_arr != oos_label,
-        "ood": gold_arr == oos_label,
-    }
-
-    for role, run in runs.items():
-        preds = np.array([top_label(r) for r in run["results"]], dtype=object)
-        correct = preds == gold_arr
-        pred_oos = preds == oos_label
-        for split, mask in split_masks.items():
-            rows.append(
-                {
-                    "role": role,
-                    "split": split,
-                    "run": run["run_dir"],
-                    "model": run["model"],
-                    "n": int(np.sum(mask)),
-                    "accuracy": safe_mean(correct[mask]),
-                    "pred_ood_rate": safe_mean(pred_oos[mask]),
-                }
-            )
-    return rows
-
-
-def agreement_rows(
-    runs: dict[str, dict[str, Any]],
-    gold: list[str],
-    oos_label: str,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    reliability_rows = []
-    split_rows = []
-    score_rows = []
-
-    gold_arr = np.array(gold)
     id_mask = gold_arr != oos_label
     oos_mask = gold_arr == oos_label
-
-    strong1 = runs["strong1"]
-    strong1_preds = np.array([top_label(r) for r in strong1["results"]], dtype=object)
-    strong1_correct = strong1_preds == gold_arr
-    strong1_conf = np.array([float(r.get("id_conf", float("nan"))) for r in strong1["results"]])
 
     for primary_role, validator_role in PAIR_ORDER:
         primary = runs[primary_role]
@@ -204,240 +157,116 @@ def agreement_rows(
         validator_preds = np.array([top_label(r) for r in validator["results"]], dtype=object)
         correct = primary_preds == gold_arr
         agree = primary_preds == validator_preds
-        disagree = ~agree
 
-        reliability_rows.append(
-            {
-                "pair": f"{primary_role}-{validator_role}",
-                "primary_run": primary["run_dir"],
-                "validator_run": validator["run_dir"],
-                "coverage": safe_mean(agree),
-                "acc_at_agree": safe_mean(correct[agree]),
-                "acc_at_disagree": safe_mean(correct[disagree]),
-                "reliability_gap": safe_mean(correct[agree]) - safe_mean(correct[disagree]),
-                "error_rate_at_agree": 1.0 - safe_mean(correct[agree]),
-                "error_rate_at_disagree": 1.0 - safe_mean(correct[disagree]),
-                "error_capture_at_disagree": safe_div(
-                    float(np.sum(disagree & ~correct)),
-                    float(np.sum(~correct)),
-                ),
-                "n_agree": int(np.sum(agree)),
-                "n_disagree": int(np.sum(disagree)),
-            }
-        )
-
-        for split_name, split_mask in [("overall", np.ones_like(id_mask, dtype=bool)), ("id", id_mask), ("ood", oos_mask)]:
+        for split_name, split_mask in [
+            ("overall", np.ones_like(id_mask, dtype=bool)),
+            ("id", id_mask),
+            ("ood", oos_mask),
+        ]:
             split_agree = agree & split_mask
-            split_disagree = disagree & split_mask
+            split_disagree = ~agree & split_mask
             split_correct = correct & split_mask
-            split_rows.append(
+            acc_at_agree = safe_mean(correct[split_agree])
+            acc_at_disagree = safe_mean(correct[split_disagree])
+            rows.append(
                 {
                     "pair": f"{primary_role}-{validator_role}",
                     "split": split_name,
                     "n": int(np.sum(split_mask)),
                     "coverage": safe_div(float(np.sum(split_agree)), float(np.sum(split_mask))),
-                    "acc_at_agree": safe_mean(correct[split_agree]),
-                    "acc_at_disagree": safe_mean(correct[split_disagree]),
+                    "acc_at_agree": acc_at_agree,
+                    "acc_at_disagree": acc_at_disagree,
+                    "reliability_gap": acc_at_agree - acc_at_disagree,
                     "error_capture_at_disagree": safe_div(
                         float(np.sum(split_disagree & ~split_correct)),
                         float(np.sum(split_mask & ~correct)),
                     ),
+                    "n_agree": int(np.sum(split_agree)),
+                    "n_disagree": int(np.sum(split_disagree)),
                 }
             )
-
-        score = agree.astype(float)
-        correctness_binary = strong1_correct.astype(int)
-        score_rows.append(score_metric_row(f"{primary_role}-{validator_role}", "agreement_binary", correctness_binary, score))
-
-        if np.all(np.isfinite(strong1_conf)):
-            score_rows.append(score_metric_row(f"{primary_role}-{validator_role}", "strong1_id_conf", correctness_binary, strong1_conf))
-            combined = 0.5 * strong1_conf + 0.5 * score
-            score_rows.append(score_metric_row(f"{primary_role}-{validator_role}", "0.5_conf_plus_0.5_agree", correctness_binary, combined))
-
-        js_scores = []
-        cosine_scores = []
-        top3_scores = []
-        for p_result, v_result in zip(primary["results"], validator["results"], strict=True):
-            metrics = compute_agreement_metrics(
-                p_result.get("probs") or {},
-                v_result.get("probs") or {},
-                top_k=3,
-            )
-            js_scores.append(1.0 - min(metrics["js_divergence"] / math.log(2), 1.0))
-            cosine_scores.append(metrics["cosine_similarity"])
-            top3_scores.append(metrics["top_k_overlap"])
-        score_rows.append(score_metric_row(f"{primary_role}-{validator_role}", "1-normalized_js", correctness_binary, np.array(js_scores)))
-        score_rows.append(score_metric_row(f"{primary_role}-{validator_role}", "cosine_similarity", correctness_binary, np.array(cosine_scores)))
-        score_rows.append(score_metric_row(f"{primary_role}-{validator_role}", "top3_overlap", correctness_binary, np.array(top3_scores)))
-
-    return reliability_rows, split_rows, score_rows
+    return rows
 
 
-def score_metric_row(pair: str, score_name: str, labels: np.ndarray, scores: np.ndarray) -> dict[str, Any]:
-    row = {"pair": pair, "score": score_name, "auroc_correctness": float("nan"), "auprc_correctness": float("nan")}
-    if roc_auc_score is None or average_precision_score is None:
-        return row
-    if len(np.unique(labels)) < 2 or len(np.unique(scores)) < 2:
-        return row
-    row["auroc_correctness"] = float(roc_auc_score(labels, scores))
-    row["auprc_correctness"] = float(average_precision_score(labels, scores))
-    return row
+def high_confidence_agreement_rows(
+    runs: dict[str, dict[str, Any]],
+    gold: list[str],
+    confidence_quantile: float,
+) -> list[dict[str, Any]]:
+    """BANKING77 RQ3 table: agreement inside the high-confidence subset.
+
+    Confidence is the cached top-label score: max(result["probs"].values()).
+    This is a gray-box diagnostic; the main agreement results remain black-box
+    top-label agreement results.
+    """
+    gold_arr = np.array(gold)
+    strong1 = runs["strong1"]
+    strong1_preds = np.array([top_label(r) for r in strong1["results"]], dtype=object)
+    strong1_correct = strong1_preds == gold_arr
+    strong1_conf = np.array([top_confidence(r) for r in strong1["results"]])
+    threshold = float(np.quantile(strong1_conf, confidence_quantile))
+    high_conf = strong1_conf >= threshold
+
+    rows = []
+    for primary_role, validator_role in PAIR_ORDER:
+        validator = runs[validator_role]
+        validator_preds = np.array([top_label(r) for r in validator["results"]], dtype=object)
+        agree = strong1_preds == validator_preds
+        agree_mask = high_conf & agree
+        disagree_mask = high_conf & ~agree
+        agree_accuracy = safe_mean(strong1_correct[agree_mask])
+        disagree_accuracy = safe_mean(strong1_correct[disagree_mask])
+        rows.append(
+            {
+                "pair": f"{primary_role}-{validator_role}",
+                "confidence_subset": "high",
+                "confidence_threshold_quantile": confidence_quantile,
+                "confidence_score": "top_label_score",
+                "confidence_threshold": threshold,
+                "agree_accuracy": agree_accuracy,
+                "disagree_accuracy": disagree_accuracy,
+                "accuracy_penalty": agree_accuracy - disagree_accuracy,
+                "agree_n": int(np.sum(agree_mask)),
+                "disagree_n": int(np.sum(disagree_mask)),
+            }
+        )
+    return rows
 
 
 def msp_baseline_rows(
     runs: dict[str, dict[str, Any]],
     gold: list[str],
 ) -> list[dict[str, Any]]:
-    """For each coverage implied by an agreement gate, report MSP accepted accuracy.
-
-    MSP gate: keep the top-K highest-confidence samples and report their accuracy.
-    This produces a fair baseline for comparing against agreement gates at the
-    same coverage.
-    """
+    """BANKING77 diagnostic baseline: MSP accepted accuracy at agreement coverages."""
     strong1 = runs["strong1"]
     strong1_preds = np.array([top_label(r) for r in strong1["results"]], dtype=object)
     strong1_conf = np.array([top_confidence(r) for r in strong1["results"]])
     correct = strong1_preds == np.array(gold)
 
-    # sort by confidence descending
     sorted_idx = np.argsort(-strong1_conf)
     sorted_correct = correct[sorted_idx]
     n = len(gold)
 
-    # collect coverages from the agreement gates
-    covs: list[float] = []
-    for primary_role, validator_role in PAIR_ORDER:
+    coverages = []
+    for _, validator_role in PAIR_ORDER:
         validator = runs[validator_role]
         validator_preds = np.array([top_label(r) for r in validator["results"]], dtype=object)
-        agree = strong1_preds == validator_preds
-        cov = float(np.mean(agree))
-        covs.append(cov)
-    covs = sorted(set(round(c, 4) for c in covs))
+        coverages.append(float(np.mean(strong1_preds == validator_preds)))
 
     rows = []
-    for cov in covs:
-        k = max(1, int(round(n * cov)))
-        accepted_correct = sorted_correct[:k]
+    for coverage in sorted(set(round(c, 4) for c in coverages)):
+        k = max(1, int(round(n * coverage)))
+        accepted_accuracy = safe_mean(sorted_correct[:k])
         rows.append(
             {
                 "method": "msp",
-                "coverage": cov,
-                "accepted_accuracy": safe_mean(accepted_correct),
-                "risk": 1.0 - safe_mean(accepted_correct),
+                "coverage": coverage,
+                "accepted_accuracy": accepted_accuracy,
+                "risk": 1.0 - accepted_accuracy,
                 "n_accepted": k,
             }
         )
     return rows
-
-
-def confidence_quadrant_rows(
-    runs: dict[str, dict[str, Any]],
-    gold: list[str],
-    oos_label: str,
-    confidence_quantile: float,
-) -> list[dict[str, Any]]:
-    rows = []
-    gold_arr = np.array(gold)
-    split_masks = {
-        "overall": np.ones(len(gold_arr), dtype=bool),
-        "id": gold_arr != oos_label,
-        "ood": gold_arr == oos_label,
-    }
-
-    strong1 = runs["strong1"]
-    strong1_preds = np.array([top_label(r) for r in strong1["results"]], dtype=object)
-    strong1_correct = strong1_preds == gold_arr
-    strong1_conf = np.array([float(r.get("id_conf", float("nan"))) for r in strong1["results"]])
-    threshold = float(np.quantile(strong1_conf, confidence_quantile))
-    high_conf = strong1_conf >= threshold
-
-    for primary_role, validator_role in PAIR_ORDER:
-        validator = runs[validator_role]
-        validator_preds = np.array([top_label(r) for r in validator["results"]], dtype=object)
-        agree = strong1_preds == validator_preds
-
-        groups = [
-            ("high", "agree", high_conf & agree),
-            ("high", "disagree", high_conf & ~agree),
-            ("low", "agree", ~high_conf & agree),
-            ("low", "disagree", ~high_conf & ~agree),
-        ]
-        for split, split_mask in split_masks.items():
-            for conf_group, agreement_group, mask in groups:
-                group_mask = mask & split_mask
-                accuracy = safe_mean(strong1_correct[group_mask])
-                rows.append(
-                    {
-                        "pair": f"{primary_role}-{validator_role}",
-                        "split": split,
-                        "confidence_threshold_quantile": confidence_quantile,
-                        "confidence_threshold": threshold,
-                        "confidence": conf_group,
-                        "agreement": agreement_group,
-                        "n": int(np.sum(group_mask)),
-                        "coverage": safe_div(float(np.sum(group_mask)), float(np.sum(split_mask))),
-                        "accuracy": accuracy,
-                        "error_rate": 1.0 - accuracy if not math.isnan(accuracy) else float("nan"),
-                    }
-                )
-    return rows
-
-
-def confidence_penalty_rows(quadrant_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    rows = []
-    by_key = {}
-    for row in quadrant_rows:
-        key = (row["pair"], row["split"], row["confidence"])
-        by_key[(key, row["agreement"])] = row
-
-    keys = sorted({key for key, agreement in by_key if agreement in {"agree", "disagree"}})
-    for pair, split, confidence in keys:
-        agree = by_key.get(((pair, split, confidence), "agree"))
-        disagree = by_key.get(((pair, split, confidence), "disagree"))
-        if agree is None or disagree is None:
-            continue
-        rows.append(
-            {
-                "pair": pair,
-                "split": split,
-                "confidence": confidence,
-                "agree_accuracy": agree["accuracy"],
-                "disagree_accuracy": disagree["accuracy"],
-                "accuracy_penalty": agree["accuracy"] - disagree["accuracy"],
-                "agree_error_rate": agree["error_rate"],
-                "disagree_error_rate": disagree["error_rate"],
-                "error_rate_increase": disagree["error_rate"] - agree["error_rate"],
-                "agree_coverage": agree["coverage"],
-                "disagree_coverage": disagree["coverage"],
-                "agree_n": agree["n"],
-                "disagree_n": disagree["n"],
-            }
-        )
-    return rows
-
-
-def _build_agreement_vs_msp_table(
-    reliability_rows: list[dict[str, Any]],
-    msp_rows: list[dict[str, Any]],
-) -> str:
-    """Build a side-by-side comparison: agreement gate vs MSP at the same coverage."""
-    msp_by_cov = {row["coverage"]: row["accepted_accuracy"] for row in msp_rows}
-    cols = ["pair", "coverage", "acc_at_agree", "msp_acc", "delta"]
-    header = "| " + " | ".join(cols) + " |"
-    sep = "| " + " | ".join(["---"] * len(cols)) + " |"
-    body = []
-    for row in reliability_rows:
-        cov = round(row["coverage"], 4)
-        msp_acc = msp_by_cov.get(cov)
-        delta = row["acc_at_agree"] - msp_acc if msp_acc is not None else float("nan")
-        body.append("| " + " | ".join([
-            row["pair"],
-            fmt(cov),
-            fmt(row["acc_at_agree"]),
-            fmt(msp_acc),
-            fmt(delta),
-        ]) + " |")
-    return "\n".join([header, sep, *body])
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -463,17 +292,13 @@ def write_markdown_report(
     dataset: str,
     dataset_description: str,
     model_rows: list[dict[str, Any]],
-    model_split_rows: list[dict[str, Any]],
-    reliability_rows: list[dict[str, Any]],
-    split_rows: list[dict[str, Any]],
-    quadrant_rows: list[dict[str, Any]],
-    penalty_rows: list[dict[str, Any]],
-    score_rows: list[dict[str, Any]],
+    agreement_rows: list[dict[str, Any]],
+    high_conf_rows: list[dict[str, Any]],
     msp_rows: list[dict[str, Any]],
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     parts = [
-        f"# {dataset.upper()} Consistency Metrics",
+        f"# {dataset.upper()} Paper Metrics",
         "",
         f"Dataset: {dataset_description}.",
         "",
@@ -485,17 +310,13 @@ def write_markdown_report(
             ["role", "run", "accuracy", "id_accuracy", "oos_accuracy_recall", "oos_precision", "pred_oos_rate"],
         ),
         "",
-        "## Single Model Accuracy by Split",
+        "## Agreement-Conditioned Accuracy by Split",
         markdown_table(
-            model_split_rows,
-            ["role", "split", "n", "accuracy", "pred_ood_rate", "run"],
-        ),
-        "",
-        "## Agreement Reliability",
-        markdown_table(
-            reliability_rows,
+            agreement_rows,
             [
                 "pair",
+                "split",
+                "n",
                 "coverage",
                 "acc_at_agree",
                 "acc_at_disagree",
@@ -506,58 +327,29 @@ def write_markdown_report(
             ],
         ),
         "",
-        "## ID/OOD Decomposition",
-        markdown_table(
-            split_rows,
-            ["pair", "split", "n", "coverage", "acc_at_agree", "acc_at_disagree", "error_capture_at_disagree"],
-        ),
-        "",
-        "## Confidence x Agreement",
-        markdown_table(
-            [row for row in quadrant_rows if row["split"] == "overall"],
-            ["pair", "split", "confidence", "agreement", "n", "coverage", "accuracy", "error_rate"],
-        ),
-        "",
-        "## Confidence x Agreement by Split",
-        markdown_table(
-            quadrant_rows,
-            ["pair", "split", "confidence", "agreement", "n", "coverage", "accuracy", "error_rate"],
-        ),
-        "",
-        "## Confidence Agreement Penalty",
-        markdown_table(
-            penalty_rows,
-            [
-                "pair",
-                "split",
-                "confidence",
-                "agree_accuracy",
-                "disagree_accuracy",
-                "accuracy_penalty",
-                "error_rate_increase",
-                "agree_n",
-                "disagree_n",
-            ],
-        ),
-        "",
-        "## Correctness Ranking Scores",
-        markdown_table(
-            score_rows,
-            ["pair", "score", "auroc_correctness", "auprc_correctness"],
-        ),
-        "",
-        "## MSP Baseline (Selective Prediction)",
-        "For each coverage point used by an agreement gate, MSP reports the accepted accuracy of a confidence-only gate.",
-        "",
-        markdown_table(
-            msp_rows,
-            ["method", "coverage", "accepted_accuracy", "risk", "n_accepted"],
-        ),
-        "",
-        "## Agreement vs MSP Comparison",
-        _build_agreement_vs_msp_table(reliability_rows, msp_rows),
-        "",
     ]
+    if high_conf_rows:
+        parts.extend(
+            [
+                "## BANKING77 High-Confidence Complementarity",
+                markdown_table(
+                    high_conf_rows,
+                    ["pair", "agree_accuracy", "disagree_accuracy", "agree_n", "disagree_n"],
+                ),
+                "",
+            ]
+        )
+    if msp_rows:
+        parts.extend(
+            [
+                "## BANKING77 MSP Baseline",
+                markdown_table(
+                    msp_rows,
+                    ["method", "coverage", "accepted_accuracy", "risk", "n_accepted"],
+                ),
+                "",
+            ]
+        )
     path.write_text("\n".join(parts), encoding="utf-8")
 
 
@@ -572,28 +364,19 @@ def parse_args() -> argparse.Namespace:
         "--confidence-quantile",
         type=float,
         default=0.5,
-        help="Strong-model id_conf quantile used to split high/low confidence.",
+        help="Strong-model top-label score quantile used for the BANKING77 high-confidence diagnostic.",
     )
     return parser.parse_args()
 
 
-def _msp_comparison_table(reliability_rows: list[dict[str, Any]], msp_rows: list[dict[str, Any]]) -> str:
-    """Console-friendly comparison of agreement vs MSP at the same coverage."""
-    msp_by_cov = {row["coverage"]: row["accepted_accuracy"] for row in msp_rows}
-    cols = ["pair", "coverage", "acc@agree", "msp_acc", "delta"]
-    return markdown_table(
-        [
-            {
-                "pair": r["pair"],
-                "coverage": round(r["coverage"], 4),
-                "acc@agree": r["acc_at_agree"],
-                "msp_acc": msp_by_cov.get(round(r["coverage"], 4)),
-                "delta": r["acc_at_agree"] - msp_by_cov.get(round(r["coverage"], 4), float("nan")),
-            }
-            for r in reliability_rows
-        ],
-        cols,
-    )
+def clean_output_dir(output_dir: Path) -> None:
+    if not output_dir.exists():
+        return
+    for path in output_dir.glob("*.csv"):
+        path.unlink()
+    report = output_dir / "report.md"
+    if report.exists():
+        report.unlink()
 
 
 def main() -> None:
@@ -617,49 +400,40 @@ def main() -> None:
             )
 
     model_rows = model_accuracy_rows(runs, gold, args.oos_label)
-    model_split_rows = model_accuracy_split_rows(runs, gold, args.oos_label)
-    reliability_rows, split_rows, score_rows = agreement_rows(runs, gold, args.oos_label)
-    quadrant_rows = confidence_quadrant_rows(runs, gold, args.oos_label, args.confidence_quantile)
-    penalty_rows = confidence_penalty_rows(quadrant_rows)
-    msp_rows = msp_baseline_rows(runs, gold)
+    agreement_rows = agreement_by_split_rows(runs, gold, args.oos_label)
+    high_conf_rows = []
+    msp_rows = []
+    if args.dataset == "bank77":
+        high_conf_rows = high_confidence_agreement_rows(runs, gold, args.confidence_quantile)
+        msp_rows = msp_baseline_rows(runs, gold)
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    clean_output_dir(output_dir)
     write_csv(output_dir / "single_model_accuracy.csv", model_rows)
-    write_csv(output_dir / "single_model_accuracy_by_split.csv", model_split_rows)
-    write_csv(output_dir / "agreement_reliability.csv", reliability_rows)
-    write_csv(output_dir / "agreement_reliability_by_split.csv", split_rows)
-    write_csv(output_dir / "agreement_id_oos_decomposition.csv", split_rows)
-    write_csv(output_dir / "confidence_agreement_quadrants.csv", quadrant_rows)
-    write_csv(output_dir / "confidence_agreement_quadrants_by_split.csv", quadrant_rows)
-    write_csv(output_dir / "confidence_agreement_penalty.csv", penalty_rows)
-    write_csv(output_dir / "correctness_ranking_scores.csv", score_rows)
+    write_csv(output_dir / "agreement_reliability_by_split.csv", agreement_rows)
+    write_csv(output_dir / "confidence_agreement_penalty.csv", high_conf_rows)
     write_csv(output_dir / "msp_baseline.csv", msp_rows)
     write_markdown_report(
         output_dir / "report.md",
         args.dataset,
         config["description"],
         model_rows,
-        model_split_rows,
-        reliability_rows,
-        split_rows,
-        quadrant_rows,
-        penalty_rows,
-        score_rows,
+        agreement_rows,
+        high_conf_rows,
         msp_rows,
     )
 
     print("\nSingle model accuracy")
     print(markdown_table(model_rows, ["role", "run", "accuracy", "id_accuracy", "oos_accuracy_recall", "oos_precision"]))
-    print("\nAgreement reliability")
-    print(markdown_table(reliability_rows, ["pair", "coverage", "acc_at_agree", "acc_at_disagree", "reliability_gap", "error_capture_at_disagree"]))
-    print("\nAgreement reliability by split")
-    print(markdown_table(split_rows, ["pair", "split", "n", "coverage", "acc_at_agree", "acc_at_disagree", "error_capture_at_disagree"]))
-    print("\nRQ3 high-confidence agree/disagree penalty")
-    high_penalty_rows = [row for row in penalty_rows if row["confidence"] == "high" and row["split"] == "overall"]
-    print(markdown_table(high_penalty_rows, ["pair", "split", "agree_accuracy", "disagree_accuracy", "accuracy_penalty", "error_rate_increase", "agree_n", "disagree_n"]))
+    print("\nAgreement-conditioned accuracy by split")
+    print(markdown_table(agreement_rows, ["pair", "split", "n", "coverage", "acc_at_agree", "acc_at_disagree", "error_capture_at_disagree"]))
+    if high_conf_rows:
+        print("\nBANKING77 high-confidence complementarity")
+        print(markdown_table(high_conf_rows, ["pair", "agree_accuracy", "disagree_accuracy", "agree_n", "disagree_n"]))
+    if msp_rows:
+        print("\nBANKING77 MSP baseline")
+        print(markdown_table(msp_rows, ["method", "coverage", "accepted_accuracy", "risk", "n_accepted"]))
     print(f"\nWrote outputs to {output_dir}")
-    print("\nAgreement vs MSP (same coverage)")
-    print(_msp_comparison_table(reliability_rows, msp_rows))
 
 
 if __name__ == "__main__":

@@ -72,18 +72,6 @@ Run caches and logs are written to:
 results/dual_cache/<output>/
 ```
 
-## Legacy Score Fusion for Two Cached Runs
-
-```bash
-uv run python -m src.run_task \
-  --dataset clinc_oos \
-  --fuse high_low \
-  --run-A Qwen3.6-27B-run1 \
-  --run-B Qwen3.6-35B-run1
-```
-
-Legacy score-fusion summaries are written under `results/fusion/`, evaluation plots are written under `results/plots/`, and any run-specific logs are kept beside the cache directories under `results/dual_cache/`. This path is not required for the paper's black-box top-label agreement analysis.
-
 ## Included Cached Runs
 
 The included paper caches are organized by dataset:
@@ -93,7 +81,7 @@ results/dual_cache/clinc/
 results/dual_cache/bank77/
 ```
 
-Each cached record includes `ranked`, `probs`, and `id_conf`. The `id_conf` field is a legacy score-based OOD confidence used only by `src/legacy/`; the paper analysis uses black-box top labels derived from `ranked`/`probs` and is not affected by `id_conf`.
+Each cached record includes `ranked`, `probs`, and `id_conf`. The paper uses top labels and top-label scores derived from `ranked`/`probs`; the `id_conf` field is retained in older caches but is not used by the paper analysis.
 
 The analysis script assigns model roles as:
 

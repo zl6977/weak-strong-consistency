@@ -1,4 +1,4 @@
-"""Entry point: load data, run phased inference, evaluate."""
+"""Entry point for cached LLM inference."""
 
 import logging
 from datetime import datetime
@@ -9,7 +9,7 @@ import pandas as pd
 from . import configs as cfg
 from . import logprob_classifier as lc
 from .agreement_config import StrategyConfig
-from .agreement_runner import run_phase, fuse_and_evaluate, _run_dir, _model_cache_path, _next_output_label, _load_cached_run
+from .agreement_runner import run_phase, _run_dir, _next_output_label
 
 logger = logging.getLogger(__name__)
 
@@ -221,11 +221,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Weak-strong agreement experiments\n"
         "Usage:\n"
-        "  1. Run inference (output saved to results/dual_cache/<output>/):\n"
+        "  Run inference (output saved to results/dual_cache/<output>/):\n"
         "     python -m src.run_task --model MODEL --output DIR [--quick N]\n"
-        "     e.g. --output Qwen3.6-27B-run0\n"
-        "  2. Run legacy score fusion for two cached runs:\n"
-        "     python -m src.run_task --fuse STRATEGY --run-A DIR --run-B DIR"
+        "     e.g. --output Qwen3.6-27B-run0"
     )
     parser.add_argument("--quick", type=int, default=None, metavar="N",
         help="Quick test: N samples per class")
@@ -234,16 +232,9 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", choices=["banking77", "clinc_oos"], default="banking77",
         help="Dataset to use. Default: banking77")
     parser.add_argument("--output", type=str, default=None,
-        help="Output directory name (e.g. Qwen3.6-27B-run0). Same value used as --run-A/--run-B. Omitted -> auto")
-    parser.add_argument("--fuse", choices=["same_model", "high_low", "two_high"],
-        default=None, help="Run legacy score fusion for cached runs with the given strategy")
-    parser.add_argument("--run-A", type=str, default=None,
-        help="Output directory for side A (e.g. Qwen3.6-27B-run0)")
-    parser.add_argument("--run-B", type=str, default=None,
-        help="Output directory for side B (e.g. Qwen3.6-35B-run0)")
+        help="Output directory name (e.g. Qwen3.6-27B-run0). Omitted -> auto")
     args = parser.parse_args()
 
-    # --- Run inference ---
     if args.model:
         model = args.model
         sample_list, intent_list, all_labels, label_descriptions, split = (
@@ -263,50 +254,5 @@ if __name__ == "__main__":
             config, split, prompt_template, output_label=output_label,
         )
         logger.info(f"Done. Cache: {output_label}")
-
-    # --- Legacy score fusion for cached runs ---
-    elif args.fuse:
-        if not args.run_A or not args.run_B:
-            logger.error("--run-A and --run-B are required for --fuse")
-            raise SystemExit(1)
-
-        label_A = args.run_A
-        label_B = args.run_B
-
-        sample_list, intent_list, all_labels, label_descriptions, split = (
-            _load_dataset(args.dataset, samples_per_class=args.quick)
-        )
-
-        cp_A = _model_cache_path(label_A, split)
-        cp_B = _model_cache_path(label_B, split)
-        for p in [cp_A, cp_B]:
-            if not os.path.exists(p):
-                logger.error(f"Cache not found: {p}")
-                logger.error("Run first: --model MODEL --output DIR")
-                raise SystemExit(1)
-
-        model_A, results_A = _load_cached_run(label_A, split)
-        model_B, results_B = _load_cached_run(label_B, split)
-
-        if args.fuse == "same_model":
-            config = StrategyConfig.same_model(model=model_A, num_runs=3)
-            config.model_B = model_B
-        elif args.fuse == "high_low":
-            config = StrategyConfig.high_low(strong=model_A, weak=model_B, num_runs=3)
-        elif args.fuse == "two_high":
-            config = StrategyConfig.two_high(strong_a=model_A, strong_b=model_B, num_runs=3)
-
-        fuse_label = f"{args.fuse}_{label_A}vs{label_B}"
-        fuse_d = _run_dir(fuse_label)
-        os.makedirs(fuse_d, exist_ok=True)
-        logfile_path = fuse_d + f"/fuse_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-        cfg.configure_logger(logfile_path, mode="w", reset=True, logging_level=logging.INFO)
-
-        logger.info(f"=== Legacy score fusion: {args.fuse} ({label_A} vs {label_B}) ===")
-        fuse_and_evaluate(
-            sample_list, intent_list, results_A, results_B,
-            config, split,
-        )
-
     else:
         parser.print_help()

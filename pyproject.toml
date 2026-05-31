@@ -11,8 +11,6 @@ dependencies = [
     "pyyaml",
     "openai",
     "tiktoken",
-    "scikit-learn",
-    "matplotlib",
 ]
 
 [project.optional-dependencies]

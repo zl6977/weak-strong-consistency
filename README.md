@@ -43,20 +43,16 @@ See `REPRODUCTION.md` for full inference and analysis commands.
 ```text
 src/
   analyze_consistency.py    Rebuilds paper analysis tables from cached runs
-  run_task.py               CLI for cached inference and legacy score fusion
-  agreement_runner.py       Checkpointed inference and legacy score fusion
+  run_task.py               CLI for cached inference
+  agreement_runner.py       Checkpointed inference
   agreement_config.py       Model-pair and agreement settings
-  agreement_metrics.py      Auxiliary agreement metrics between score maps
   llm_api.py                OpenAI-compatible local LLM client
-  legacy/                   Score-based OOD utilities from earlier experiments
 dataset/
   clinc_oos/                Local CLINC-OOS parquet files
   banking77/                Local BANKING77 parquet files
 results/
   dual_cache/               Cached LLM inference results and run logs
   analysis/                 Reproduced CSV metrics and Markdown reports
-  fusion/                   Legacy score-fusion JSON outputs
-  plots/                    Legacy score-fusion plots
 latex/                      Paper source and conference template files
 prompt_resources/           Prompt templates
 ```
